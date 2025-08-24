@@ -11,6 +11,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             "data",
             "thumbnail",
             "analysis",
+            "interactions",
             "created_at",
             "updated_at",
         ]

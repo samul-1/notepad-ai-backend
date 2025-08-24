@@ -10,6 +10,8 @@ class Document(models.Model):
     thumbnail = models.ImageField(upload_to="thumbnails/", null=True, blank=True)
     # Most recent AI analysis: description and element boxes
     analysis = models.JSONField(default=dict, blank=True)
+    # Structured suggestions for interactive widgets
+    interactions = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
