@@ -8,6 +8,14 @@ import cv2
 from openai import OpenAI
 from django.conf import settings
 
+SYSTEM_PROMPT = (
+    "You inspect a student's whiteboard built with Excalidraw and act as a pair "
+    "study partner. Summarize the board and suggest helpful interactions. "
+    "Output JSON with fields: summary (string), items (array), and interactions "
+    "(array). Each item is {id,type,text?,bbox:[x1,y1,x2,y2]}. Each interaction "
+    "is {id, bbox:[x1,y1,x2,y2], label, action}."
+)
+
 
 def preprocess_thumbnail_for_boxes(
     image: Image.Image,
@@ -27,10 +35,8 @@ def build_prompt(
     elements_boxes: List[Tuple[int, int, int, int]], excalidraw_data: Dict[str, Any]
 ) -> str:
     parts = [
-        "You are given a whiteboard created with Excalidraw.",
-        "Return a concise JSON with: 'summary' (textual description), and 'items' (array).",
-        "Each item: {id, type, text?, bbox:[x1,y1,x2,y2]}.",
-        "Use the provided bounding boxes and Excalidraw elements to anchor positions.",
+        "Whiteboard snapshot for analysis.",
+        "Use it to output summary, items and interaction suggestions.",
     ]
     # Include element ids/types/texts (but not large geometry) for grounding
     elements_brief = []
@@ -44,6 +50,7 @@ def build_prompt(
         elements_brief.append(brief)
     parts.append("Excalidraw elements (brief):\n" + json.dumps(elements_brief)[:50000])
     parts.append("Detected bounding boxes:\n" + json.dumps(elements_boxes))
+    parts.append("Return fields: summary, items, interactions.")
     parts.append("Respond with ONLY the JSON, no prose.")
     return "\n\n".join(parts)
 
@@ -52,20 +59,73 @@ def call_gpt(prompt: str) -> Dict[str, Any]:
     api_key = settings.OPENAI_API_KEY
     if not api_key:
         print("No OpenAI API key found")
-        return {"summary": "", "items": []}
+        return {"summary": "", "items": [], "interactions": []}
     client = OpenAI(api_key=api_key)
+    schema = {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "type": {"type": "string"},
+                        "text": {"type": "string"},
+                        "bbox": {
+                            "type": "array",
+                            "items": {"type": "number"},
+                            "minItems": 4,
+                            "maxItems": 4,
+                        },
+                    },
+                    "required": ["id", "type", "bbox"],
+                },
+            },
+            "interactions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "bbox": {
+                            "type": "array",
+                            "items": {"type": "number"},
+                            "minItems": 4,
+                            "maxItems": 4,
+                        },
+                        "label": {"type": "string"},
+                        "action": {"type": "string"},
+                    },
+                    "required": ["id", "bbox", "label", "action"],
+                },
+            },
+        },
+        "required": ["summary", "items", "interactions"],
+    }
     resp = client.responses.create(
         model="gpt-5",
-        input=[{"role": "user", "content": prompt}],
+        input=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "analysis", "schema": schema, "strict": True},
+        },
         max_output_tokens=10000,
-        # temperature=0.2,
     )
     try:
         content = resp.output_text
         print(content)
         return json.loads(content)
     except Exception:
-        return {"summary": content if "content" in locals() else "", "items": []}
+        return {
+            "summary": content if "content" in locals() else "",
+            "items": [],
+            "interactions": [],
+        }
 
 
 def run_analysis_pipeline(document) -> None:
@@ -80,5 +140,9 @@ def run_analysis_pipeline(document) -> None:
     prompt = build_prompt(detected_boxes, document.data or {})
     print(prompt)
     result = call_gpt(prompt)
-    document.analysis = result
-    document.save(update_fields=["analysis", "updated_at"])
+    document.analysis = {
+        "summary": result.get("summary", ""),
+        "items": result.get("items", []),
+    }
+    document.interactions = result.get("interactions", [])
+    document.save(update_fields=["analysis", "interactions", "updated_at"])
