@@ -19,14 +19,14 @@ class DocumentRetrieveUpdateView(generics.RetrieveUpdateAPIView):
     serializer_class = DocumentSerializer
     parser_classes = [JSONParser]
 
-    def perform_update(self, serializer):
-        document = serializer.save()
-        try:
-            run_analysis_pipeline(document)
-        except Exception:
-            # best-effort; don't fail the save
-            print("Error running analysis pipeline:", sys.exc_info())
-            pass
+    # def perform_update(self, serializer):
+    #     document = serializer.save()
+    #     try:
+    #         run_analysis_pipeline(document)
+    #     except Exception:
+    #         # best-effort; don't fail the save
+    #         print("Error running analysis pipeline:", sys.exc_info())
+    #         pass
 
 
 class DocumentThumbnailUploadView(generics.UpdateAPIView):
@@ -43,6 +43,7 @@ class DocumentThumbnailUploadView(generics.UpdateAPIView):
             )
         document.thumbnail.save(file_obj.name, file_obj, save=True)
         try:
+            print("Running analysis pipeline...")
             run_analysis_pipeline(document)
         except Exception:
             pass
