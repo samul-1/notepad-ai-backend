@@ -19,15 +19,6 @@ class DocumentRetrieveUpdateView(generics.RetrieveUpdateAPIView):
     serializer_class = DocumentSerializer
     parser_classes = [JSONParser]
 
-    # def perform_update(self, serializer):
-    #     document = serializer.save()
-    #     try:
-    #         run_analysis_pipeline(document)
-    #     except Exception:
-    #         # best-effort; don't fail the save
-    #         print("Error running analysis pipeline:", sys.exc_info())
-    #         pass
-
 
 class DocumentThumbnailUploadView(generics.UpdateAPIView):
     queryset = Document.objects.all()
@@ -41,9 +32,10 @@ class DocumentThumbnailUploadView(generics.UpdateAPIView):
             return Response(
                 {"detail": "No thumbnail provided"}, status=status.HTTP_400_BAD_REQUEST
             )
+        # Save to both image and thumbnail for backward compatibility
+        document.image.save(file_obj.name, file_obj, save=False)
         document.thumbnail.save(file_obj.name, file_obj, save=True)
         try:
-            print("Running analysis pipeline...")
             run_analysis_pipeline(document)
         except Exception:
             pass

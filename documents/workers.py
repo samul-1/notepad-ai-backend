@@ -3,7 +3,7 @@ import io
 import json
 import os
 from typing import Dict, Any, List, Tuple
-from PIL import Image, ImageDraw
+from PIL import Image
 from django.core.files.base import ContentFile
 import numpy as np
 import cv2
@@ -58,9 +58,10 @@ def get_document_analysis(prompt: str, document) -> Dict[str, Any]:
     client = OpenAI(api_key=api_key)
 
     document.refresh_from_db()
-    image_b64 = base64.b64encode(document.thumbnail.file.read()).decode()
-
-    # print("Sending to OpenAI with prompt:", prompt)
+    image_file = document.image or document.thumbnail
+    if not image_file:
+        return {"summary": "", "items": []}
+    image_b64 = base64.b64encode(image_file.file.read()).decode()
 
     resp = client.responses.create(
         model="gpt-5",
@@ -77,12 +78,9 @@ def get_document_analysis(prompt: str, document) -> Dict[str, Any]:
                 ],
             },
         ],
-        # max_output_tokens=10000,
-        # temperature=0.2,
     )
     try:
         content = resp.output_text
-        # print(content)
         return json.loads(content)
     except Exception:
         return {"summary": content if "content" in locals() else "", "items": []}
@@ -125,7 +123,7 @@ def get_document_interactions(analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         "You are a study assistant. You are given the textual description of a whiteboard, "
         "which includes the items drawn on it and their bounding boxes. Your task is to evaluate the "
         "contents and identify potential interactions to show the user. Interactions can be of types: "
-        "\n".join(
+        + "\n".join(
             [
                 "- 'draw_graph': suggest drawing a graph based on data present or near a function definition",
                 "- 'calculate': suggest performing a calculation based on numbers or formulas present",
@@ -168,51 +166,39 @@ def get_document_interactions(analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         return []
 
 
-def run_analysis_pipeline(document) -> None:
-    # TODO in the future, here use a field "picture", and have a separate field for thumbnail
-    if not document.thumbnail:
-        # Best effort using boxes from elements frame positions if available
-        detected_boxes = []
-    else:
-        with document.thumbnail.open("rb") as f:
-            image = Image.open(f).convert("RGB")
-            detected_boxes = preprocess_thumbnail_for_boxes(image)
+def compute_detected_boxes_for_document(document) -> List[Tuple[int, int, int, int]]:
+    """Best-effort detection of boxes using the image/thumbnail saved on the document."""
+    try:
+        if document.image:
+            with document.image.open("rb") as f:
+                image = Image.open(f).convert("RGB")
+                return preprocess_thumbnail_for_boxes(image)
+        if document.thumbnail:
+            with document.thumbnail.open("rb") as f:
+                image = Image.open(f).convert("RGB")
+                return preprocess_thumbnail_for_boxes(image)
+    except Exception as e:
+        print("Error in box detection:", e)
+    return []
 
+
+def compute_analysis_for_document(document) -> Dict[str, Any]:
+    """Compute and persist analysis for a document and return it."""
+    detected_boxes = compute_detected_boxes_for_document(document)
     prompt = build_prompt(detected_boxes, document.data or {})
     analysis = get_document_analysis(prompt, document)
     document.analysis = analysis
+    document.save(update_fields=["analysis", "updated_at"])
+    return analysis
 
-    document.save(
-        update_fields=[
-            "analysis",
-            # "interactions",
-            "updated_at",
-        ]
-    )
+
+def compute_interactions_for_document(analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return get_document_interactions(analysis)
+
+
+def run_analysis_pipeline(document) -> None:
+    """Backward-compatible wrapper. Computes analysis then interactions. Left in place for REST path."""
+    analysis = compute_analysis_for_document(document)
     interactions = get_document_interactions(analysis)
-    # document.interactions = interactions
-    # TODO send down the interaction
-
+    # For now we don't persist interactions on the model; they're ephemeral
     print("Interactions:", interactions)
-    # Draw over the thumbnail the interactions as small circles with the initial of the type
-
-    try:
-        with document.thumbnail.open("rb") as f:
-            image = Image.open(f).convert("RGB")
-            draw = ImageDraw.Draw(image)
-            for inter in interactions:
-                bbox = inter.get("bbox", [])
-                if len(bbox) == 4:
-                    x1, y1, x2, y2 = bbox
-                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    r = 10
-                    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill="red")
-                    draw.text(
-                        (cx + r, cy - r),
-                        inter.get("type", "?")[0].upper(),
-                        fill="white",
-                    )
-            # show the image
-            image.show()
-    except Exception as e:
-        print("Error drawing interactions:", e)

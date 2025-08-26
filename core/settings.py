@@ -37,9 +37,11 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
+    "daphne",
     "django.contrib.staticfiles",
     "rest_framework",
     "corsheaders",
+    "channels",
     "documents",
 ]
 
@@ -70,6 +72,9 @@ TEMPLATES = [
         },
     },
 ]
+
+# Channels/ASGI application entrypoint
+ASGI_APPLICATION = "core.asgi.application"
 
 WSGI_APPLICATION = "core.wsgi.application"
 
@@ -142,3 +147,10 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+# Channels in-memory layer for local dev (use Redis in prod)
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+    }
+}

@@ -9,6 +9,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "data",
+            "image",
             "thumbnail",
             "analysis",
             "created_at",
